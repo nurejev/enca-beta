@@ -29,6 +29,14 @@
 // ======================================================================
 const CHANGELOG = [
   {
+    build: 32514, date: "2026-10-13", title: "Waiting for production: every Conditional Access item promotes without PIM-buddy",
+    items: [
+      { kind: "improved", tool: "Help", text: "Waiting for production: Administrative units (item 314) no longer needs items 301 and 302 of PIM-buddy, so every Conditional Access item can be ordered on its own or with the Conditional Access items it names. The code that reaches PIM-buddy goes through one bridge that does nothing in a build without it (item 323, platform). A Conditional Access item that needs a PIM-buddy item now fails the test suite instead of blocking the order later." },
+      { kind: "fixed", tool: "Administrative units", text: "The unit list and inventory reset on sign-in, sign-out and demo was part of the PIM baseline reset; it is now the tool's own, so it resets in every build." },
+      { kind: "improved", tool: "Help", text: "Waiting for production: the deployment dashboard (319) says it needs Fill from regions (311), so an order with one and not the other warns." },
+    ],
+  },
+  {
     build: 32513, date: "2026-10-13", title: "Fill deploy groups from regions: how it works, and admin accounts stay in ADM",
     items: [
       { kind: "new", tool: "Conditional Access groups", text: "Fill deploy groups from regions: a How it works panel in Sources and Preview explains the three steps, every rule as a table with your deploy group names, domains and external marker, a worked example, and exactly what Add only, Add + fix and Apply change. A rule that Settings turns off says so." },
