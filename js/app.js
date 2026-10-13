@@ -18,6 +18,26 @@
   let tenantDomains = [];
   let tenantDefaultDomain = "";   // 32429: the tenant's default verified domain — an MSP admin's sign-in domain is not the customer's
   let tenantId = "";        // for the account menu's Copy tenant ID; "" in the demo
+  // PIM BRIDGE (32514) — the ONE way code outside the PIM-buddy block reaches
+  // into it. Mihai, 13 Oct: the tools awaiting production must be independent
+  // of each other, because a Conditional Access fix could not be promoted
+  // without publishing PIM-buddy (314 called prlOn, pmbReg and prlPanel
+  // directly, and the sign-in path called pmbReset unguarded). The defaults
+  // below are what a build WITHOUT PIM-buddy behaves like: never in the lens,
+  // no regions file, no PIM read, nothing to reset or paint. The PIM-buddy
+  // block fills them in (search "pimBridge, {"). A port of a Conditional Access
+  // or platform item to main carries this stub and leaves the block behind.
+  // tools/pimbridge.test.cjs fails the suite when anything outside the block
+  // names one of the block's own functions or variables.
+  const pimBridge = {
+    on: () => false,          // T27 and friends are opened from Workspace 02
+    regions: () => null,      // 🧬 PIM baseline's regions compare, or null
+    raw: () => null,          // 🧬 PIM baseline's read, or null
+    auPanel: () => "",        // the PIM lens panel on 🛡 Administrative units
+    auWire: () => {},
+    reset: () => {},          // sign-in, sign-out, demo
+    paint: () => {},          // show(): the PIM lens over a carried-over tool
+  };
   let capabilityCache = null;
   async function readCapabilities(force = false) {
     const key = `${tenantId}:${isDemo}`;
@@ -234,7 +254,7 @@
       });
     }
     shownScreen = id;
-    try { pimLensPaint(id); } catch { /* the lenses are wired further down */ }
+    try { pimBridge.paint(id); } catch { /* a lens that fails to paint never stops the screen */ }
     if (navSuppress || !HISTORY_SCREENS.has(id)) return;
     // Replace rather than push when the screen has not changed, so clicking the
     // same tool twice does not need two Backs to leave it.
@@ -2527,7 +2547,7 @@
         }
       }
       tenantLogo = logo || null;
-      isDemo = false; caSettingsCache = undefined; authMethodsCache = undefined; isRaw = null; isModel = null; isErr = null; xtRaw = null; xtModel = null; xtErr = null; pkRaw = null; pkModel = null; pkErr = null; pmbReset();
+      isDemo = false; caSettingsCache = undefined; authMethodsCache = undefined; isRaw = null; isModel = null; isErr = null; xtRaw = null; xtModel = null; xtErr = null; pkRaw = null; pkModel = null; pkErr = null; pimBridge.reset(); ruContextReset();
       signinContext = { tenantId: account?.tenantId || "", at: Date.now(), demo: false, names: names || {}, ...(context || {}) };
       // Results belong to the snapshot they were computed from.
       invalidateToolResults("policies reloaded");
@@ -2600,7 +2620,7 @@
     // catalog it is not.
     tenantDomain = "";
     tenantLogo = null;
-    isDemo = true; caSettingsCache = undefined; authMethodsCache = undefined; isRaw = null; isModel = null; isErr = null; xtRaw = null; xtModel = null; xtErr = null; pkRaw = null; pkModel = null; pkErr = null; pmbReset();
+    isDemo = true; caSettingsCache = undefined; authMethodsCache = undefined; isRaw = null; isModel = null; isErr = null; xtRaw = null; xtModel = null; xtErr = null; pkRaw = null; pkModel = null; pkErr = null; pimBridge.reset(); ruContextReset();
     {
       const at = Date.now();
       const strengths = Object.entries(DEMO_DATA.depSettings || {}).filter(([k]) => k.startsWith("authStrength:")).map(([, v]) => v);
@@ -12386,19 +12406,25 @@ This is a directory write. Nothing else changes.`)) return;
   let ruInv = { busy: false, stop: false, data: null, err: null, progress: "", open: false };
   let ruInvRun = 0;     // a read that outlives its context publishes nothing
   function ruInvReset() { ruInvRun++; ruInv = { busy: false, stop: false, data: null, err: null, progress: "", open: ruInv.open }; }
-  function ruInvLens() { return prlOn() ? "pim" : "ca"; }
+  // 32435: 🛡 Administrative units' list and inventory belong to the context
+  // they were read in — a read in flight is stopped and its result dropped.
+  // Sign-in, demo and sign-out call it; it lived inside pmbReset until 32514,
+  // so a build without PIM-buddy never reset the inventory.
+  function ruContextReset() { if (ruInv.busy) ruInv.stop = true; ruList = null; ruDetails = {}; ruInvReset(); }
+  function ruInvLens() { return pimBridge.on() ? "pim" : "ca"; }
   function ruInvRes() {
     if (!ruInv.data) return null;
     const d = { ...ruInv.data, aus: ruList || ruInv.data.aus, policies: policies.map((p) => p.raw), lens: ruInvLens(),
-      regions: ruInvLens() === "pim" ? pmbReg : null };
+      regions: ruInvLens() === "pim" ? pimBridge.regions() : null };
     return AuInv.model(d);
   }
   async function ruInvRoles() {
     // In the PIM lens the 🧬 read already holds every instance with its scope.
-    if (prlOn() && pmbRaw && Array.isArray(pmbRaw.eligible) && Array.isArray(pmbRaw.active)) {
-      const tpl = {}; (pmbRaw.roles || []).forEach((r) => { tpl[r.id] = r.templateId || r.id; });
+    const pimRaw = pimBridge.on() ? pimBridge.raw() : null;
+    if (pimRaw && Array.isArray(pimRaw.eligible) && Array.isArray(pimRaw.active)) {
+      const tpl = {}; (pimRaw.roles || []).forEach((r) => { tpl[r.id] = r.templateId || r.id; });
       const map = (a, state) => ({ directoryScopeId: a.directoryScopeId, roleName: a.roleName, roleTemplateId: tpl[a.roleId] || a.roleId, principalId: a.principalId, principalName: a.principalName, principalType: a.principalType, state, endDateTime: a.endDateTime, assignmentType: a.assignmentType });
-      return { list: [...pmbRaw.eligible.map((a) => map(a, "eligible")), ...pmbRaw.active.map((a) => map(a, "active"))].filter((a) => AuInv.auOfScope(a.directoryScopeId)), eligibleRead: true };
+      return { list: [...pimRaw.eligible.map((a) => map(a, "eligible")), ...pimRaw.active.map((a) => map(a, "active"))].filter((a) => AuInv.auOfScope(a.directoryScopeId)), eligibleRead: true };
     }
     if (isDemo) return { list: ((typeof DEMO_DATA !== "undefined" && DEMO_DATA.adminUnitRoles) || []).slice(), eligibleRead: true };
     const kind = (p) => String((p && p["@odata.type"]) || "").replace("#microsoft.graph.", "");
@@ -12470,7 +12496,7 @@ This is a directory write. Nothing else changes.`)) return;
     const head = `<div class="cg-panel" id="ruInvPanel"><h4>INVENTORY — EVERY UNIT, RESTRICTED AND REGULAR</h4>`;
     if (ruInv.busy) return head + `<p class="mini"><span class="spinner" style="width:16px;height:16px;display:inline-block;vertical-align:middle"></span> Reading ${esc(ruInv.progress)}… <button class="btn sm" data-auinvstop>■ Stop</button></p></div>`;
     const res = ruInvRes();
-    if (!res) return head + `${ruInv.err ? `<p class="mini" style="color:var(--off)">Not read — ${esc(ruInv.err)}</p>` : ""}<p class="mini" style="margin:0 0 8px">Reads the members of every unit and who holds a role at each unit's scope — active and eligible — and judges each one: a Conditional Access group a scoped admin can change, a role held directly and permanently, two regional desks on the same people, a paused rule, a role on an empty unit, a unit nothing uses${prlOn() ? ", a role held outside a PIM-SG group, and a unit that differs from the regions file" : ""}. Reads only (AdministrativeUnit.Read.All, RoleManagement.Read.Directory).</p><button class="btn primary" data-auinvread>▶ Check every unit</button></div>`;
+    if (!res) return head + `${ruInv.err ? `<p class="mini" style="color:var(--off)">Not read — ${esc(ruInv.err)}</p>` : ""}<p class="mini" style="margin:0 0 8px">Reads the members of every unit and who holds a role at each unit's scope — active and eligible — and judges each one: a Conditional Access group a scoped admin can change, a role held directly and permanently, two regional desks on the same people, a paused rule, a role on an empty unit, a unit nothing uses${pimBridge.on() ? ", a role held outside a PIM-SG group, and a unit that differs from the regions file" : ""}. Reads only (AdministrativeUnit.Read.All, RoleManagement.Read.Directory).</p><button class="btn primary" data-auinvread>▶ Check every unit</button></div>`;
     const c = res.counts;
     const tiles = `<div class="xt-tiles pmb-tiles"><div class="xt-tile"><b>${c.total}</b>units read</div><div class="xt-tile"><b>${c.restricted} · ${c.regular}</b>restricted · regular</div><div class="xt-tile"><b>${c.holders}</b>roles at unit scope${ruInv.data.eligibleRead ? " (active + eligible)" : " (active only)"}</div><div class="xt-tile${c.high ? " h" : c.other ? " m" : ""}"><b>${c.high} high · ${c.other} other</b>findings on ${c.withFindings} unit${c.withFindings === 1 ? "" : "s"}</div></div>`;
     const notes = res.notes.length ? `<p class="mini pmb-warn">${res.notes.map(esc).join(" ")}</p>` : "";
@@ -12672,7 +12698,7 @@ This is a directory write. Nothing else changes.`)) return;
     $("ruHead").innerHTML = `<div style="display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap">
       <div style="flex:1;min-width:260px">
         ${toolHead("toolRmau")}
-        ${prlOn() ? `<p style="margin-bottom:4px"><b>PIM lens (Workspace 02).</b> The CloudFellows PIM framework keeps executives, their devices and sensitive groups that are not role-assignable in <b>AU-RM-Executives</b>, with a named desk scoped on it — and keeps every PIM object <b>out</b> of restricted units: a role-assignable group protects itself, and inside a restricted unit PIM, access reviews and lifecycle workflows stop working.</p>` : ""}
+        ${pimBridge.on() ? `<p style="margin-bottom:4px"><b>PIM lens (Workspace 02).</b> The CloudFellows PIM framework keeps executives, their devices and sensitive groups that are not role-assignable in <b>AU-RM-Executives</b>, with a named desk scoped on it — and keeps every PIM object <b>out</b> of restricted units: a role-assignable group protects itself, and inside a restricted unit PIM, access reviews and lifecycle workflows stop working.</p>` : ""}
         <p style="margin-bottom:4px">Every administrative unit in the tenant, restricted and regular: what it holds, who can act inside it, and what it holds that it should not. A <b>regular</b> unit hands whoever holds a role at its scope the objects inside it; a <b>restricted</b> one shuts tenant-wide roles out, so its members answer <b>only</b> to roles scoped to that unit — the vaults that shield CA exclusion groups.</p>
         <p class="mini muted" style="margin:0">The <code>isMemberManagementRestricted</code> flag is <b>immutable</b> — set at creation, never changeable, so a regular unit is never made restricted: its objects are moved into a restricted one. Creating a restricted unit needs <b>Privileged Role Administrator</b>; touching members of one needs a role <b>scoped to it</b> — a 403 there is the shield working, not a fault. Every write asks for its permission on the click.</p>
       </div>
@@ -12695,8 +12721,8 @@ This is a directory write. Nothing else changes.`)) return;
     }).sort((a, b) => sevRank(a) - sevRank(b) || (Rmau.isRestricted(b) ? 1 : 0) - (Rmau.isRestricted(a) ? 1 : 0) || (a.displayName || "").localeCompare(b.displayName || ""));
     // 32422: opened from Workspace 02, the CA panels (persona vaults, the map,
     // scoped admins across units) give way to the PIM lens; the unit cards stay.
-    const lead = prlOn() ? prlPanel() + ruInvPanel() : ruInvPanel() + ruBaselinePanel() + ruMapPanel() + ruBulkAdminPanel();
-    if (!rows.length) { $("ruBody").innerHTML = lead + '<p class="mini" style="padding:20px">No administrative unit matches the current filter.</p>'; if (prlOn()) prlWire(); return; }
+    const lead = pimBridge.on() ? pimBridge.auPanel() + ruInvPanel() : ruInvPanel() + ruBaselinePanel() + ruMapPanel() + ruBulkAdminPanel();
+    if (!rows.length) { $("ruBody").innerHTML = lead + '<p class="mini" style="padding:20px">No administrative unit matches the current filter.</p>'; if (pimBridge.on()) pimBridge.auWire(); return; }
     $("ruBody").innerHTML = lead + `<div class="lo-grid">` + rows.map((au) => {
       const open = ruOpen.has(au.id);
       const d = ruDetails[au.id];
@@ -12753,7 +12779,7 @@ This is a directory write. Nothing else changes.`)) return;
         </div>
       </div>`;
     }).join("") + `</div>
-    <p class="mini muted" style="margin-top:8px">Click a card header — or <b>👤 Scoped admins</b> — for members and scoped role grants. Member changes on a restricted AU need a role scoped to it — the error Graph returns otherwise is the protection doing its job.</p>`;    if (prlOn()) prlWire();
+    <p class="mini muted" style="margin-top:8px">Click a card header — or <b>👤 Scoped admins</b> — for members and scoped role grants. Member changes on a restricted AU need a role scoped to it — the error Graph returns otherwise is the protection doing its job.</p>`;    if (pimBridge.on()) pimBridge.auWire();
   }
   $("ruChips").addEventListener("click", (e) => { const b = e.target.closest("[data-ruf]"); if (!b) return; ruFilter = b.dataset.ruf; renderRmau(); });
   $("ruBody").addEventListener("click", async (e) => {
@@ -22508,6 +22534,9 @@ This is a directory write. Nothing else changes.`)) return;
   // for the session; "What ENCA sees" is judged again from the policies
   // loaded now every time the tab or the dashboard paints (js/idscore.js).
   // Read-only: status changes stay in the Entra admin center.
+  // >>> PIM-BUDDY BLOCK BEGIN — Workspace 02 only, down to PIM-BUDDY BLOCK END.
+  // Nothing outside it names what it declares; the rest of the app asks
+  // through pimBridge (top of this file). tools/pimbridge.test.cjs holds that.
   // ======================================================================
   // 🧬 PIM baseline (T48, R68) — this tenant's PIM against the CloudFellows
   // PIM framework (js/pimBaselineData.js), in a profile. The compare, the
@@ -22570,9 +22599,6 @@ This is a directory write. Nothing else changes.`)) return;
     pmbRegRows = null; pmbRegText = ""; pmbRegErrors = []; pmbRegWarnings = [];
     pmbSel = null; pmbRegSel = null;
     try { prlReset(); prrReset(); prpReset(); pdpReset(); plxReset(); paz = { raw: null, model: null, err: null, busy: false }; } catch { /* defined further down; nothing to reset yet */ }
-    // 32435: 🛡 Administrative units' list and inventory belong to the context
-    // they were read in — a read in flight is stopped and its result dropped.
-    try { if (ruInv.busy) ruInv.stop = true; ruList = null; ruDetails = {}; ruInvReset(); } catch { /* not declared yet */ }
   }
   const PMB_HEAD_TEXT = `<p class="mini" style="margin:6px 0 0">This tenant's Privileged Identity Management against the <b>CloudFellows PIM framework ${esc(PIM_BASELINE.release)}</b>, authored in <b>cloudfellows.dev</b>, in the profile you pick: Small business, Large · one region, or Large · multi-region. The model: people are <b>active members</b> of persona groups for at most a year, each group is <b>eligible</b> for its roles, and a person activates the role under the role's own tier; Intune and Defender XDR roles go to access groups (PIM-SG-INT-*, PIM-SG-XDR-*) whose members are eligible — the Defender roles themselves are made in the Defender portal and never read here. Setting by setting, and every group as a model matched by id — present once, role-assignable, carrying exactly its roles at tenant scope. <b>Members are never compared.</b> Nothing that could not be read is shown as a match. Read-only here: <b>🚀 Import ticked →</b> takes the ticked rows (and, on 🗺 Regions, the regions) into <b>🚀 Deploy</b>, which imports them from the browser after a WhatIf — no script to run. <b>⋯ EasyPIM file</b> and <b>📄 EasyPIM samples</b> are for customers who run PIM as code themselves.</p>`;
   const PMB_INT_HEAD_TEXT = `<p class="mini" style="margin:6px 0 0">Intune has no administrative units and no PIM of its own, so the <b>CloudFellows PIM framework ${esc(PIM_BASELINE.release)}</b> draws the same boundaries with Intune's objects: <b>role assignments</b> whose members are the PIM-SG-INT-* access groups (eligible members — activating the group is the gate; a persona group never sits in one), <b>scope groups</b> for who and what an assignment reaches, <b>scope tags</b> for what an admin sees, and one <b>custom role</b>, INT-ROLE-Regional-Ops. Central assignments come from the profile, regional ones from the regions file (🗺 Regions). Read-only through Microsoft Graph (DeviceManagementRBAC.Read.All, consented once); 🚀 Deploy applies what is missing. Defender XDR and Purview RBAC stay outside.</p>`;
@@ -23884,6 +23910,17 @@ This is a directory write. Nothing else changes.`)) return;
     host.innerHTML = `<details class="cg-panel pim-lens"${plx.open[id] === false ? "" : " open"}><summary><b>PIM LENS · ${esc(title)}</b> <span class="mini">Workspace 02 — the tool below is the same as in 01</span></summary><p class="mini">${esc(lead)}</p>${plxBody(kind)}</details>`;
   }
   function prlOnSafe() { try { return prlOn(); } catch { return false; } }
+  // The PIM bridge (top of this file): what code outside this block may ask
+  // of PIM-buddy. Filled here, so a build without the block keeps the stub.
+  Object.assign(pimBridge, {
+    on: prlOnSafe,
+    regions: () => pmbReg,
+    raw: () => pmbRaw,
+    auPanel: prlPanel,
+    auWire: prlWire,
+    reset: pmbReset,
+    paint: pimLensPaint,
+  });
   const plxReadBtn = (what) => `<div class="run-prompt"><button class="btn primary" data-lensread>▶ Read ${esc(what)}</button></div>`;
   function plxBody(kind) {
     if (plx.busy) return `<p class="mini"><span class="spinner" style="width:16px;height:16px;display:inline-block;vertical-align:middle"></span> Reading…</p>`;
@@ -23993,6 +24030,7 @@ This is a directory write. Nothing else changes.`)) return;
     } catch (e) { paz.err = String((e && e.message) || e); }
     paz.busy = false; prrPaint();
   }
+  // <<< PIM-BUDDY BLOCK END — see pimBridge at the top of this file.
 
   function isRebuild() {
     if (!isRaw) { isModel = null; return; }
@@ -25325,7 +25363,7 @@ This is a directory write. Nothing else changes.`)) return;
     hideSideNav();
     policies = []; selected.clear();
     // the Overview and the previous snapshot belong to that sign-in (25424)
-    policiesReadAt = null; ovPrev = null; ovDiff = null; ovReadError = null; ovLoading = false; idFilter = null; signinContext = null; pmbReset();
+    policiesReadAt = null; ovPrev = null; ovDiff = null; ovReadError = null; ovLoading = false; idFilter = null; signinContext = null; pimBridge.reset(); ruContextReset();
     try { renderOverview(); } catch {}
     // Back to the neutral look — the next person at this browser may not be
     // the same audience.

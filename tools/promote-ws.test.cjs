@@ -59,18 +59,40 @@ test("the order file says which workspace, fingerprints itself and names what it
   assert.notStrictEqual(P.fingerprint("ca", [n]), P.fingerprint("pim", [n]));
 });
 
-test("a requires into the other workspace blocks the export (314 reads 301 and 302)", () => {
-  const c = P.checkOrder([314], "ca");
-  assert.ok(c.blocks.some((b) => /314 needs items 301, 302 of 02 PIM-buddy/.test(b)), c.blocks.join(" | "));
-  assert.throws(() => P.buildOrder([314], BUILD, "ca"), /314 needs/);
+test("a requires into the other workspace still blocks the export (the safety net)", () => {
+  const Q = load();
+  Q.items.push({ n: 90010, ws: "ca", requires: [301], title: "fixture ca needing pim", tools: ["Checks"], builds: [1], risk: "low", test: ["x"], files: ["js/app.js"] });
+  const c = Q.checkOrder([90010], "ca");
+  assert.ok(c.blocks.some((b) => /90010 needs item 301 of 02 PIM-buddy/.test(b)), c.blocks.join(" | "));
+  assert.throws(() => Q.buildOrder([90010], BUILD, "ca"), /90010 needs/);
+});
+
+// 32514, Mihai: the tools awaiting production must be independent of each
+// other — a Conditional Access fix could not be promoted without publishing
+// PIM-buddy. A ca or platform item that needs a pim item is a design error:
+// route the call through pimBridge in js/app.js instead of queueing it.
+test("no Conditional Access or platform item requires a PIM-buddy item", () => {
+  const pim = new Set(byWs("pim"));
+  const bad = P.items.filter((i) => i.ws !== "pim").flatMap((i) => (i.requires || []).filter((r) => pim.has(r)).map((r) => `${i.n} → ${r}`));
+  assert.strictEqual(bad.length, 0, `use pimBridge, not a requires: ${bad.join(", ")}`);
+});
+
+test("every Conditional Access item exports with what it requires, nothing blocked (314 included)", () => {
+  const byN = new Map(P.items.map((i) => [i.n, i]));
+  const closure = (n, seen = new Set()) => { if (seen.has(n) || !byN.has(n)) return seen; seen.add(n); (byN.get(n).requires || []).forEach((r) => closure(r, seen)); return seen; };
+  for (const n of byWs("ca")) {
+    const c = P.checkOrder([...closure(n)], "ca");
+    assert.strictEqual(c.blocks.length, 0, `item ${n}: ${c.blocks.join(" | ")}`);
+  }
+  assert.doesNotThrow(() => P.buildOrder([314, 323], BUILD, "ca"));
 });
 
 test("an unticked requires in the same workspace warns, ticked it is quiet", () => {
   const c1 = P.checkOrder([299], "pim");
   assert.strictEqual(c1.blocks.length, 0, c1.blocks.join(" | "));
-  assert.ok(c1.warns.some((w) => /299 needs item 298, not ticked/.test(w)));
-  const c2 = P.checkOrder([298, 299], "pim");
-  assert.ok(!c2.warns.some((w) => /needs item 298/.test(w)));
+  assert.ok(c1.warns.some((w) => /299 needs items 298, 323, not ticked/.test(w)), c1.warns.join(" | "));
+  const c2 = P.checkOrder([298, 299, 323], "pim");
+  assert.ok(!c2.warns.some((w) => /299 needs/.test(w)));
 });
 
 // The three tests below stand on their own items rather than on whatever is

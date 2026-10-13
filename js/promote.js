@@ -134,8 +134,16 @@ const PROMOTE = {
   //
   // `requires` on an item names the items it cannot work without. Pointing
   // into another workspace is the dangerous case — the order check blocks the
-  // export and says which item needs what (314 is the first: the unit
-  // inventory reads the PIM lens of 302 and the regions of 301).
+  // export and says which item needs what. 314 was the first (the unit
+  // inventory read the PIM lens of 302 and the regions of 301), and it held a
+  // Conditional Access fix hostage to publishing PIM-buddy. Since 32514
+  // (Mihai, 13 Oct: the tools awaiting production must be independent of
+  // each other) that is a design error, not something to queue around:
+  // Conditional Access and platform code reaches PIM-buddy only through
+  // pimBridge in js/app.js, whose defaults are a build without PIM-buddy, and
+  // tools/promote-ws.test.cjs fails the suite when a ca or platform item
+  // requires a pim item. Inside one workspace a `requires` is still allowed —
+  // write it, so the order warns instead of a port finding out.
   //
   // A workspace is a guard about the BUILD, never the host: a tool hidden on
   // the production host is still in every copy that serves the build (the
@@ -162,6 +170,23 @@ const PROMOTE = {
   },
 
   items: [
+    {
+      n: 323,
+      ws: "platform",
+      title: "🔌 PIM bridge — Conditional Access code reaches PIM-buddy through one seam, so every CA item ports without Workspace 02",
+      tools: ["Administrative units"],
+      builds: [32514],
+      risk: "low",
+      what: "js/app.js: const pimBridge near the top (on, regions, raw, auPanel, auWire, reset, paint) with the defaults of a build without PIM-buddy; the PIM-buddy block, now between >>> PIM-BUDDY BLOCK BEGIN and <<< PIM-BUDDY BLOCK END markers, fills it in with Object.assign. show(), sign-in, demo and sign-out call pimBridge.paint and pimBridge.reset instead of pimLensPaint and pmbReset; 🛡 Administrative units (314) calls pimBridge instead of prlOn, pmbReg, pmbRaw, prlPanel and prlWire. ruContextReset (the unit list and inventory reset of 314) moves out of pmbReset to the Conditional Access side. tools/pimbridge.test.cjs (5): nothing outside the block names what the block declares or a PIM-buddy module, the stub and the fill name the same calls, and app.js with the block cut out still parses. No behaviour change on beta.",
+      why: "Mihai, 13 Oct: the tools awaiting production must be independent of each other — a Conditional Access fix could not be promoted without publishing PIM-buddy. 314 required 301 and 302 because its code called them by name, and the sign-in path called pmbReset unguarded, so a CA port without PIM-buddy would throw on sign-in. Low: a seam with defaults, no read or write changes.",
+      test: [
+        "Local: node --test tools/pimbridge.test.cjs (5) and tools/promote-ws.test.cjs pass; the whole suite passes. Put prlOn() back into ruInvLens: test 2 fails naming the line.",
+        "Demo (?demo=1), 01: 🛡 Administrative units → ▶ Check every unit gives the same findings as on 32513; no PIM lens panel. Sign out and back into the demo: the inventory is empty again (ruContextReset).",
+        "Demo, 02 PIM-buddy (?demo=1&ws=pim): 🛡 Administrative units shows the PIM lens panel first, then the inventory with the holder-not-pim-group findings; the PIM lens over 🛡 Checks and 👥 PIM groups still paints when the tool opens.",
+        "Port simulation: copy js/app.js, delete the lines from >>> PIM-BUDDY BLOCK BEGIN to <<< PIM-BUDDY BLOCK END, load the page in demo with that copy and without the js/pim*.js scripts: no console error on boot, sign-in to the demo, 🛡 Administrative units or sign-out.",
+      ],
+      files: ["js/app.js", "tools/pimbridge.test.cjs", "js/version.js", "js/changelog.js", "js/promote.js"],
+    },
     {
       n: 322,
       ws: "ca",
@@ -225,6 +250,9 @@ const PROMOTE = {
     {
       n: 319,
       ws: "ca",
+      requires: [311],
+      requiresWhy: "The dashboard reads 🌍 Fill's deploy group names, settings and region list (DgFill.targets, dgPrefs, dgListStored, dgReadCandidates) and its left-out list opens Fill.",
+      carveout: "js/workspaces.js: only the toolDeployDash blurb. If main has no js/workspaces.js (item 298, the workspace shell, is PIM-buddy and not promoted), skip it; the tile and the sidebar row in index.html work without it.",
       title: "📊 Deployment dashboard — the T28 rollout picture for Conditional Access (T54 0.1.0, R81)",
       tools: ["Deployment dashboard"],
       builds: [32505],
@@ -302,11 +330,11 @@ const PROMOTE = {
     {
       n: 314,
       ws: "ca",
-      requires: [301, 302],
-      requiresWhy: "ruInvLens() reads prlOn() from 302 and the inventory passes pmbReg (the regions file of 301) to its judge, so this item does not port on its own: promote 301 and 302 with it, or port it with those two branches cut.",
+      requires: [323],
+      requiresWhy: "Since 32514 the inventory asks pimBridge (item 323) whether it is in the PIM lens, for the regions file and for the PIM read; it no longer names 301 or 302. Without PIM-buddy the bridge says no, and T27 is the Conditional Access tool.",
       title: "Administrative units — T27 covers regular units too (inventory, findings, move into a restricted unit)",
       tools: ["Administrative units"],
-      builds: [32435],
+      builds: [32435, 32514],
       risk: "medium",
       what: "T27 is renamed Administrative units (number kept) and gains an inventory of every unit, restricted and regular: js/auinv.js (pure) models kind, membership type and rule, processing state, members, and roles at each unit's scope, active and eligible (PIM schedule instances; fallback to scopedRoleMembers, active only, said in the panel), and judges: ca-group-writable (high with a scoped Groups or User Administrator, medium otherwise; not for role-assignable groups or groups also in a restricted unit), holder-direct-standing (CA lens), holder-not-pim-group (PIM lens), overlap (regular units with desks on both), rule-paused, scoped-empty, unused, vault-closed, region-differs and region-unknown (PIM lens with a regions file). js/app.js: ruInvRead / ruInvRoles / ruInvPanel / ruInvMove, filters All / Restricted / Regular / With findings, the inventory above the unit's members in its card, reset on sign-in, sign-out and demo, a run counter so a read from an old context publishes nothing. One write: Move to a restricted unit (POST members/$ref on the restricted unit, the group stays in the regular one). Rename in the tile, Help, palette, rail and every live cross-reference; the catalog and EasyPIM samples keep the old name until the next docs review. Demo data: four regular units and roles at unit scope. tools/auinv.test.cjs (20).",
       why: "Mihai, 5 Oct: T27 should also handle regular admin units. Mockup first (T27 Administrative units), decisions A-D as recommended: rename and keep the number, read-only for regular units apart from the move, the PIM lens adds the regions file, eligible roles counted. Medium: reads only, except one member add into a restricted unit, which narrows who can change the group's members and is undone by taking it out again.",
@@ -320,7 +348,9 @@ const PROMOTE = {
         "02 PIM-buddy (?demo=1&ws=pim): the PIM lens panel comes first, then the inventory; a holder that is not a PIM-SG group (SG-Helpdesk-NL, Hanna Helpdesk) is a finding; load the regions file in 🧬 PIM baseline → 🗺 Regions, then Check again: a regional unit that differs is reported and the units the file builds but the tenant lacks are listed under the tiles.",
         "Switch tenant or demo while the inventory is reading: nothing from the old read appears afterwards; ■ Stop ends the read with stopped, nothing judged.",
         "node --test tools/*.test.cjs — all pass; node tools/check-plain-text.js clean."
-      ]
+      ],
+      files: ["js/auinv.js", "js/app.js", "js/demo.js", "index.html", "js/version.js", "js/changelog.js", "js/promote.js", "tools/auinv.test.cjs"],
+      carveout: "js/app.js: take the ru* and ruInv* parts, ruContextReset and its three calls (sign-in, demo, sign-out); the calls to pimBridge come with item 323. Leave out every line between the PIM-BUDDY BLOCK markers. Check: grep -nE 'prlOn|prlPanel|prlWire|pmbReg|pmbRaw' js/app.js on main returns nothing.",
     },
     {
       n: 313,
@@ -587,7 +617,7 @@ const PROMOTE = {
     {
       n: 299,
       ws: "pim",
-      requires: [298],
+      requires: [298, 323],
       title: "🧬 PIM baseline — T48, Workspace 02: the CloudFellows PIM framework (PIM-SG, 2.0) against this tenant's PIM, setting by setting; delta and baseline config as EasyPIM.Orchestrator JSON (R68)",
       tools: ["PIM baseline"],
       builds: [32408, 32409, 32410, 32412],
